@@ -351,6 +351,28 @@ internal sealed partial class AnsiPainter(AppConfig config, SessionState session
         }
     }
 
+    internal void PaintPermissionLane(string title, string summary, string opt1, string opt2, string opt3, string opt4)
+    {
+        Sz();
+        var w  = _tw - _sideW;
+        var sb = new StringBuilder(512);
+
+        void Row(int offset, string text)
+        {
+            sb.Append($"{E}[{Math.Max(1, _th - offset)};1H");
+            sb.Append($"{BgInput} {PadR(text, Math.Max(0, w - 2))}{R}");
+        }
+
+        Row(6, title);
+        Row(5, summary);
+        Row(4, opt1);
+        Row(3, opt2);
+        Row(2, opt3);
+        Row(1, opt4);
+
+        lock (_writeLock) { W(sb.ToString()); Flush(); }
+    }
+
     internal void ShowCtrlCBanner()
     {
         _ctrlCBannerVisible = true;
@@ -937,6 +959,11 @@ internal sealed partial class AnsiPainter(AppConfig config, SessionState session
                 var divider = $"{BgInput}{Fk}{new string('─', mainW)}{R}";
                 for (var row = oldFirstContent - 1; row < firstContentRow - 1; row++)
                     sb.Append($"{E}[{Math.Max(1, row + 1)};1H{BgMain}{new string(' ', mainW)}{R}");
+                sb.Append($"{E}[{Math.Max(1, firstContentRow - 1)};1H{divider}");
+            }
+            else if (prevRows > 0 && contentRows > prevRows)
+            {
+                var divider = $"{BgInput}{Fk}{new string('─', mainW)}{R}";
                 sb.Append($"{E}[{Math.Max(1, firstContentRow - 1)};1H{divider}");
             }
 

@@ -22,7 +22,7 @@ internal sealed class AnsiInputReader(
 
     private DateTime _lastCtrlCTime = DateTime.MinValue;
 
-    private (int scroll, string? paste) TryReadEscapeSequence()
+    private (int scroll, string? paste, int wordMove, int lineMove) TryReadEscapeSequence()
     {
         var seq = new StringBuilder(32);
         while (seq.Length < 64)
@@ -32,13 +32,14 @@ internal sealed class AnsiInputReader(
             if (!Console.KeyAvailable) break;
             var k = terminal.TryReadKey();
             if (k is null) break;
-            seq.Append(k.Value.KeyChar);
+            var ch = k.Value.KeyChar;
+            seq.Append(ch);
             var s = seq.ToString();
 
             if (s == "[200~")
-                return (0, ReadBracketedPasteContent());
+                return (0, ReadBracketedPasteContent(), 0, 0);
 
-            if (k.Value.KeyChar is 'M' or 'm')
+            if (ch is 'M' or 'm')
             {
                 if (s.StartsWith("[<") && s.Length >= 4)
                 {
@@ -47,19 +48,45 @@ internal sealed class AnsiInputReader(
                     var parts = inner.Split(';');
                     if (parts.Length == 3 && int.TryParse(parts[0], out var btn))
                     {
-                        if (btn == 64) return (+1, null);
-                        if (btn == 65) return (-1, null);
+                        if (btn == 64) return (+1, null, 0, 0);
+                        if (btn == 65) return (-1, null, 0, 0);
                     }
                 }
                 break;
             }
 
-            if ((k.Value.KeyChar >= 'A' && k.Value.KeyChar <= 'Z') ||
-                (k.Value.KeyChar >= 'a' && k.Value.KeyChar <= 'z') ||
-                k.Value.KeyChar == '~')
-                break;
+            if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '~')
+            {
+                if (s == "O" && Console.KeyAvailable)
+                    continue;
+
+                return s switch
+                {
+                    "b" or "[1;3D" or "[1;5D" => (0, null, -1,  0),
+                    "f" or "[1;3C" or "[1;5C" => (0, null, +1,  0),
+                    "[1;9D" or "[H" or "OH"   => (0, null,  0, -1),
+                    "[1;9C" or "[F" or "OF"   => (0, null,  0, +1),
+                    _                          => (0, null,  0,  0),
+                };
+            }
         }
-        return (0, null);
+        return (0, null, 0, 0);
+    }
+
+    private static int MoveWordBackward(string text, int cursor)
+    {
+        var pos = cursor;
+        while (pos > 0 && text[pos - 1] == ' ') pos--;
+        while (pos > 0 && text[pos - 1] != ' ') pos--;
+        return pos;
+    }
+
+    private static int MoveWordForward(string text, int cursor)
+    {
+        var pos = cursor;
+        while (pos < text.Length && text[pos] != ' ') pos++;
+        while (pos < text.Length && text[pos] == ' ') pos++;
+        return pos;
     }
 
     private string ReadBracketedPasteContent()
@@ -132,10 +159,10 @@ internal sealed class AnsiInputReader(
 
             if (k.Key == ConsoleKey.Escape)
             {
-                if (!Console.KeyAvailable) Thread.Sleep(12);
+                if (!Console.KeyAvailable) { var ms = 0; while (!Console.KeyAvailable && ms < 50) { Thread.Sleep(1); ms++; } }
                 if (Console.KeyAvailable)
                 {
-                    var (scroll, paste) = TryReadEscapeSequence();
+                    var (scroll, paste, _, _) = TryReadEscapeSequence();
                     if (paste is not null)
                     {
                         _bgInputBuf.Append(paste.Replace("\r\n", "\n").Replace('\r', '\n'));
@@ -243,6 +270,9 @@ internal sealed class AnsiInputReader(
                 continue;
             }
 
+            if (k.Modifiers.HasFlag(ConsoleModifiers.Alt))
+                continue;
+
             if (k.KeyChar != '\0' && !char.IsControl(k.KeyChar))
             {
                 _bgInputBuf.Append(k.KeyChar);
@@ -290,17 +320,16 @@ internal sealed class AnsiInputReader(
             ? summary[..(maxSummaryLen - 3)] + "..."
             : summary;
 
-        painter.PaintActionLane(
+        painter.PaintPermissionLane(
             $"{AnsiPainter.Fy}{AnsiPainter.B}▸ Permission required: {tool}{AnsiPainter.R}",
             $"{AnsiPainter.Fw}{truncatedSummary}{AnsiPainter.R}",
-            $"  {AnsiPainter.B}{AnsiPainter.Fg}[y]{AnsiPainter.R}{AnsiPainter.BgInput} Allow  " +
-            $"{AnsiPainter.B}{AnsiPainter.Fy}[n]{AnsiPainter.R}{AnsiPainter.BgInput} Deny  " +
-            $"{AnsiPainter.B}{AnsiPainter.Fc}[a]{AnsiPainter.R}{AnsiPainter.BgInput} Allow all  " +
-            $"{AnsiPainter.B}{AnsiPainter.Fr}[!]{AnsiPainter.R}{AnsiPainter.BgInput} Deny all"
+            $"  {AnsiPainter.B}{AnsiPainter.Fg}[y]{AnsiPainter.R}{AnsiPainter.BgInput}  Allow",
+            $"  {AnsiPainter.B}{AnsiPainter.Fy}[n]{AnsiPainter.R}{AnsiPainter.BgInput}  Deny",
+            $"  {AnsiPainter.B}{AnsiPainter.Fc}[a]{AnsiPainter.R}{AnsiPainter.BgInput}  Allow all",
+            $"  {AnsiPainter.B}{AnsiPainter.Fr}[!]{AnsiPainter.R}{AnsiPainter.BgInput}  Deny all"
         );
 
         var response = ReadPermissionKey();
-        painter.PaintActionLane("", "", "");
         painter.Paint();
         StartBackgroundInput();
         return Task.FromResult(response);
@@ -401,10 +430,10 @@ internal sealed class AnsiInputReader(
 
                 if (k.Key == ConsoleKey.Escape)
                 {
-                    if (!Console.KeyAvailable) Thread.Sleep(12);
+                    if (!Console.KeyAvailable) { var ms = 0; while (!Console.KeyAvailable && ms < 50) { Thread.Sleep(1); ms++; } }
                     if (Console.KeyAvailable)
                     {
-                        var (scroll, paste) = TryReadEscapeSequence();
+                        var (scroll, paste, wordMove, lineMove) = TryReadEscapeSequence();
                         if (paste is not null)
                         {
                             var c = paste.Replace("\r\n", "\n").Replace('\r', '\n');
@@ -414,6 +443,10 @@ internal sealed class AnsiInputReader(
                             if (!sugVis) suggestions.UpdateAtSearch(ps, cur, ref atVis);
                             painter.DrawInputText(ps, cur);
                         }
+                        else if (wordMove < 0) { cur = MoveWordBackward(buf.ToString(), cur); painter.DrawInputText(buf.ToString(), cur); }
+                        else if (wordMove > 0) { cur = MoveWordForward(buf.ToString(), cur);  painter.DrawInputText(buf.ToString(), cur); }
+                        else if (lineMove < 0) { cur = 0;           painter.DrawInputText(buf.ToString(), cur); }
+                        else if (lineMove > 0) { cur = buf.Length;  painter.DrawInputText(buf.ToString(), cur); }
                         else if (scroll > 0) { painter.ScrollBy(+3); painter.Paint(); }
                         else if (scroll < 0) { painter.ScrollBy(-3); painter.Paint(); }
                         continue;
@@ -523,6 +556,20 @@ internal sealed class AnsiInputReader(
                     continue;
                 }
 
+                if (k.Key == ConsoleKey.B && k.Modifiers.HasFlag(ConsoleModifiers.Alt))
+                { cur = MoveWordBackward(buf.ToString(), cur); painter.DrawInputText(buf.ToString(), cur); continue; }
+                if (k.Key == ConsoleKey.F && k.Modifiers.HasFlag(ConsoleModifiers.Alt))
+                { cur = MoveWordForward(buf.ToString(), cur); painter.DrawInputText(buf.ToString(), cur); continue; }
+                if (k.Key == ConsoleKey.LeftArrow && k.Modifiers.HasFlag(ConsoleModifiers.Alt))
+                { cur = 0; painter.DrawInputText(buf.ToString(), cur); continue; }
+                if (k.Key == ConsoleKey.RightArrow && k.Modifiers.HasFlag(ConsoleModifiers.Alt))
+                { cur = buf.Length; painter.DrawInputText(buf.ToString(), cur); continue; }
+
+                if (k.Key == ConsoleKey.LeftArrow && k.Modifiers.HasFlag(ConsoleModifiers.Control))
+                { cur = MoveWordBackward(buf.ToString(), cur); painter.DrawInputText(buf.ToString(), cur); continue; }
+                if (k.Key == ConsoleKey.RightArrow && k.Modifiers.HasFlag(ConsoleModifiers.Control))
+                { cur = MoveWordForward(buf.ToString(), cur); painter.DrawInputText(buf.ToString(), cur); continue; }
+
                 if (k.Key == ConsoleKey.LeftArrow)  { if (cur > 0)            cur--; painter.DrawInputText(buf.ToString(), cur); continue; }
                 if (k.Key == ConsoleKey.RightArrow) { if (cur < buf.Length)   cur++; painter.DrawInputText(buf.ToString(), cur); continue; }
                 if (k.Key == ConsoleKey.Home)        { cur = 0;               painter.DrawInputText(buf.ToString(), cur); continue; }
@@ -631,7 +678,7 @@ internal sealed class AnsiInputReader(
                 if (k.KeyChar == '!')         return PermissionResponse.DenyAll;
                 if (k.Key == ConsoleKey.Escape)
                 {
-                    if (!Console.KeyAvailable) Thread.Sleep(12);
+                    if (!Console.KeyAvailable) { var ms = 0; while (!Console.KeyAvailable && ms < 50) { Thread.Sleep(1); ms++; } }
                     if (Console.KeyAvailable) { TryReadEscapeSequence(); continue; }
                     return PermissionResponse.Deny;
                 }
