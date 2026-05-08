@@ -56,6 +56,12 @@ if command -v docker &>/dev/null && ! docker info &>/dev/null 2>&1; then
     fi
 fi
 
+# Source the shared env file written by install_prereqs.sh (GPU_MODE, etc.)
+# shellcheck source=/dev/null
+if [[ -n "${OPENMONO_ENV_FILE:-}" ]] && [[ -f "$OPENMONO_ENV_FILE" ]]; then
+    source "$OPENMONO_ENV_FILE"
+fi
+
 # Role selector — drives which of the 8 install steps actually run.
 # If the caller (openmono setup) already exported OPENMONO_ROLE, use it.
 # Otherwise prompt — this handles the direct-run path where openmono CLI isn't available yet.
@@ -181,15 +187,39 @@ ok "Install directory: $INSTALL_DIR"
 
 next_step "Checking system requirements"
 
-# RAM — only matters on machines that will load the 18.5 GB model
-if command -v free &>/dev/null; then
-    TOTAL_MEM=$(free -g | awk '/^Mem:/{print $2}')
-    if [ "$OPENMONO_ROLE" = "agent" ]; then
-        ok "RAM: ${TOTAL_MEM}GB (no model loaded locally on agent box)"
-    elif [ "$TOTAL_MEM" -lt 20 ]; then
-        warn "Only ${TOTAL_MEM}GB RAM detected (model needs ~20GB). It may be slow or fail to load."
+# GPU_MODE is exported by install_prereqs.sh (1 = GPU, 0 = CPU).
+# Query VRAM to determine the right model tier. Only for roles that load a model.
+# Tiers:  24GB+ → Qwen3.6-27B Q4  (full accuracy)
+#         16GB  → Qwen3.6-35B-A3B Q3 + q4 kv cache  (lower accuracy)
+#         12GB  → Qwen3.5-9B Q4 + q4 kv cache        (lower accuracy)
+#         CPU   → Qwen3.6-35B-A3B Q4_K_XL (MoE, 3.5B active params)
+_VRAM_GB=0
+_GPU_TIER=0
+if [ "$OPENMONO_ROLE" != "agent" ]; then
+    if [ "${GPU_MODE:-0}" = "1" ]; then
+        if command -v nvidia-smi &>/dev/null; then
+            _VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | awk 'NR==1{print $1}')
+            _VRAM_GB=$(( ${_VRAM_MB:-0} / 1024 ))
+            if   [ "$_VRAM_GB" -ge 24 ]; then _GPU_TIER=24; ok "GPU VRAM: ${_VRAM_GB}GB — full accuracy model (Qwen3.6-27B)"
+            elif [ "$_VRAM_GB" -ge 16 ]; then _GPU_TIER=16; warn "GPU VRAM: ${_VRAM_GB}GB — lower accuracy model (Qwen3.6-35B-A3B Q3 + q4 kv cache). For best results use 24GB+ VRAM."
+            elif [ "$_VRAM_GB" -ge 12 ]; then _GPU_TIER=12; warn "GPU VRAM: ${_VRAM_GB}GB — lower accuracy model (Qwen3.5-9B Q4 + q4 kv cache). For best results use 24GB+ VRAM."
+            else
+                warn "GPU mode selected but only ${_VRAM_GB}GB VRAM — minimum is 12GB. Falling back to CPU mode."
+                GPU_MODE=0
+            fi
+        else
+            warn "GPU mode selected but nvidia-smi not found. Falling back to CPU mode."
+            GPU_MODE=0
+        fi
     else
-        ok "RAM: ${TOTAL_MEM}GB"
+        if command -v free &>/dev/null; then
+            TOTAL_MEM=$(free -g | awk '/^Mem:/{print $2}')
+            if [ "$TOTAL_MEM" -lt 20 ]; then
+                warn "Only ${TOTAL_MEM}GB RAM detected — CPU model needs ~20GB. It may be slow or fail to load."
+            else
+                ok "RAM: ${TOTAL_MEM}GB"
+            fi
+        fi
     fi
 fi
 
@@ -229,29 +259,31 @@ fi
 
 cd "$INSTALL_DIR"
 
-# Early GPU sniff — used to select the right model before Step 6 does full validation.
-# GPU:  Qwen3.6-27B-Q4_K_M  (dense 27B, needs VRAM for speed)
-# CPU:  Qwen3.6-35B-A3B-UD-Q4_K_XL (MoE, only 3.5B active params — fast on CPU)
-_EARLY_GPU=false
-if [ "${OPENMONO_GPU:-}" = "1" ]; then
-    _EARLY_GPU=true
-elif [ "${OPENMONO_CPU:-}" != "1" ] && command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
-    docker info 2>/dev/null | grep -q nvidia && _EARLY_GPU=true
-fi
-
 # ── Step 4: Download model (inference + full only) ───────────────────────────
 
 if [ "$OPENMONO_ROLE" != "agent" ]; then
     MODEL_DIR="$INSTALL_DIR/models"
 
-    if [ "$_EARLY_GPU" = true ]; then
+    if [ "$_GPU_TIER" -eq 24 ]; then
         MODEL_NAME="Qwen3.6-27B-Q4_K_M.gguf"
         MODEL_URL="https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/Qwen3.6-27B-Q4_K_M.gguf"
-        next_step "Downloading Qwen3.6-27B-Q4_K_M model (~15 GB) [GPU]"
+        MODEL_ACCURACY="full"
+        next_step "Downloading Qwen3.6-27B-Q4_K_M (~15GB) [GPU 24GB+ — full accuracy]"
+    elif [ "$_GPU_TIER" -eq 16 ]; then
+        MODEL_NAME="Qwen3.6-35B-A3B-UD-IQ3_S.gguf"
+        MODEL_URL="https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-IQ3_S.gguf"
+        MODEL_ACCURACY="lower"
+        next_step "Downloading Qwen3.6-35B-A3B-Q3 (~12GB) [GPU 16GB — lower accuracy]"
+    elif [ "$_GPU_TIER" -eq 12 ]; then
+        MODEL_NAME="Qwen3.5-9B-Q4_K_M.gguf"
+        MODEL_URL="https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf"
+        MODEL_ACCURACY="lower"
+        next_step "Downloading Qwen3.5-9B-Q4_K_M (~5GB) [GPU 12GB — lower accuracy]"
     else
         MODEL_NAME="qwen3.6-35b-a3b-ud-q4_k_xl.gguf"
         MODEL_URL="https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
-        next_step "Downloading Qwen3.6-35B-A3B model (~17.6 GB) [CPU]"
+        MODEL_ACCURACY="standard"
+        next_step "Downloading Qwen3.6-35B-A3B (~17.6GB) [CPU]"
     fi
 
     # Dev override: fetch from local mirror at http://<host>/models/<filename>
@@ -361,44 +393,32 @@ if [ "$OPENMONO_ROLE" != "inference" ]; then
     fi
 fi
 
-# ── Step 6: Detect/configure GPU mode (inference + full only) ────────────────
+# ── Step 6: Configure GPU/CPU mode (inference + full only) ───────────────────
 
 if [ "$OPENMONO_ROLE" != "agent" ]; then
-    next_step "Detecting GPU / CPU mode"
+    next_step "Configuring GPU / CPU mode"
 
-HAS_GPU=false
-if [ "${OPENMONO_GPU:-}" = "1" ]; then
-    info "GPU mode forced via --gpu"
-    HAS_GPU=true
-elif [ "${OPENMONO_CPU:-}" = "1" ]; then
-    info "CPU mode forced via --cpu"
-    HAS_GPU=false
-elif command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
-    if docker info 2>/dev/null | grep -q nvidia; then
-        info "NVIDIA GPU + nvidia runtime detected"
-        HAS_GPU=true
+    if [ "${GPU_MODE:-0}" = "1" ]; then
+        info "GPU mode (selected during prerequisites)"
     else
-        warn "NVIDIA GPU detected, but Docker is not configured with the nvidia runtime."
-        warn "Run: openmono setup  (installs nvidia-container-toolkit)"
-        warn "Falling back to CPU mode."
+        info "CPU mode"
     fi
-else
-    if [ "${HAS_NVIDIA_HW:-false}" = true ]; then
-        warn "NVIDIA GPU hardware detected, but drivers are not working or not installed."
-        warn "Falling back to CPU mode."
-    else
-        info "No NVIDIA GPU detected — using CPU mode"
-    fi
-fi
 
 OVERRIDE_FILE="$INSTALL_DIR/docker/docker-compose.override.yml"
 # Derive a clean alias from the filename (strip .gguf) so /props returns the right name
 MODEL_ALIAS="${MODEL_NAME%.gguf}"
 
-if [ "$HAS_GPU" = true ]; then
+if [ "${GPU_MODE:-0}" = "1" ]; then
+    # 24GB tier: q8 kv cache (high quality); 16GB/12GB tiers: q4 kv cache (saves VRAM)
+    if [ "$_GPU_TIER" -ge 24 ]; then
+        _KV_K="q8_0"; _KV_V="q8_0"
+    else
+        _KV_K="q4_0"; _KV_V="q4_0"
+    fi
+    [ "$MODEL_ACCURACY" = "lower" ] && info "Lower accuracy model selected — q4 kv cache enabled to fit ${_VRAM_GB}GB VRAM"
     info "Writing GPU override: $OVERRIDE_FILE"
     cat > "$OVERRIDE_FILE" <<EOF
-# GPU configuration (auto-generated by install.sh)
+# GPU configuration (auto-generated by install.sh — ${MODEL_ACCURACY:-full} accuracy)
 services:
   llama-server:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
@@ -411,8 +431,8 @@ services:
       --threads 14
       --n-gpu-layers 99
       --flash-attn on
-      --cache-type-k q8_0
-      --cache-type-v q8_0
+      --cache-type-k $_KV_K
+      --cache-type-v $_KV_V
       --batch-size 2048
       --ubatch-size 1024
       --parallel 1
@@ -502,7 +522,7 @@ run docker compose down || true
 # Only build the images this role actually needs.
 if [ "$OPENMONO_ROLE" != "agent" ]; then
     info "Building llama-server image..."
-    if [ "${HAS_GPU:-false}" = true ]; then
+    if [ "${GPU_MODE:-0}" = "1" ]; then
         if ! run docker compose build --no-cache llama-server; then
             die "llama-server build failed"
         fi
@@ -610,14 +630,14 @@ echo ""
 case "$OPENMONO_ROLE" in
     full)
         echo "  llama-server port : ${LLAMA_PORT:-7474}"
-        echo "  mode              : $([ "${HAS_GPU:-false}" = true ] && echo GPU || echo CPU)"
+        echo "  mode              : $([ "${GPU_MODE:-0}" = "1" ] && echo GPU || echo CPU)"
         echo ""
         printf "  ${BOLD}Reload your shell to apply changes:${NC}\n"
         printf "    source ~/.bashrc\n"
         ;;
     inference)
         echo "  llama-server port : ${LLAMA_PORT:-7474}"
-        echo "  mode              : $([ "${HAS_GPU:-false}" = true ] && echo GPU || echo CPU)"
+        echo "  mode              : $([ "${GPU_MODE:-0}" = "1" ] && echo GPU || echo CPU)"
         echo ""
         printf "  ${BOLD}Reload your shell to apply changes:${NC}\n"
         printf "    source ~/.bashrc\n"
@@ -665,6 +685,7 @@ if [[ -n "${OPENMONO_ENV_FILE:-}" ]]; then
 export INSTALL_DIR="$INSTALL_DIR"
 export LLAMA_PORT="${LLAMA_PORT:-7474}"
 export OPENMONO_ROLE="$OPENMONO_ROLE"
+export MODEL_ACCURACY="${MODEL_ACCURACY:-standard}"
 ENVEOF
     _log "Wrote install environment to: $OPENMONO_ENV_FILE"
 else

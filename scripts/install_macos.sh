@@ -122,13 +122,12 @@ ok "Install directory: $INSTALL_DIR"
 
 next_step "Checking system requirements"
 
-# RAM — only matters on machines that will load the 18.5 GB model
-if command -v sysctl &>/dev/null; then
+# RAM — macOS always runs CPU mode (Docker runs in a Linux VM, no GPU passthrough)
+# Only relevant for roles that load a model locally
+if [ "$OPENMONO_ROLE" != "agent" ] && command -v sysctl &>/dev/null; then
     TOTAL_MEM=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 / 1024 ))
-    if [ "$OPENMONO_ROLE" = "agent" ]; then
-        ok "RAM: ${TOTAL_MEM}GB (no model loaded locally on agent box)"
-    elif [ "$TOTAL_MEM" -lt 20 ]; then
-        warn "Only ${TOTAL_MEM}GB RAM detected (model needs ~20GB). It may be slow or fail to load."
+    if [ "$TOTAL_MEM" -lt 20 ]; then
+        warn "Only ${TOTAL_MEM}GB RAM detected — CPU model needs ~20GB. It may be slow or fail to load."
     else
         ok "RAM: ${TOTAL_MEM}GB"
     fi
@@ -455,6 +454,7 @@ if [[ -n "${OPENMONO_ENV_FILE:-}" ]]; then
 export INSTALL_DIR="$INSTALL_DIR"
 export LLAMA_PORT="${LLAMA_PORT:-7474}"
 export OPENMONO_ROLE="$OPENMONO_ROLE"
+export MODEL_ACCURACY="standard"
 ENVEOF
     _log "Wrote install environment to: $OPENMONO_ENV_FILE"
 else

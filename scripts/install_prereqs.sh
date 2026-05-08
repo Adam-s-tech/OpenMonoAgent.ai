@@ -482,3 +482,9 @@ echo ""
 ok "Prerequisites ready"
 echo ""
 show_log_location
+
+# Write GPU_MODE to the shared env file so install.sh picks it up without re-detecting
+if [[ -n "${OPENMONO_ENV_FILE:-}" ]]; then
+    echo "export GPU_MODE=\"${GPU_MODE:-0}\"" >> "$OPENMONO_ENV_FILE"
+    _log "GPU_MODE=${GPU_MODE:-0} written to env file"
+fi

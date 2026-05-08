@@ -217,6 +217,11 @@ cmd_setup() {
             ;;
     esac
 
+    # Set env file before prereqs so both scripts can write to it
+    export OPENMONO_ENV_FILE="$HOME/.openmono/.tmp_install_env"
+    mkdir -p "$(dirname "$OPENMONO_ENV_FILE")"
+    : > "$OPENMONO_ENV_FILE"  # clear any previous run
+
     bash "$_PREREQS_SCRIPT" || {
         err "Prerequisite install failed. Full log: $OPENMONO_LOG_FILE"
         exit 1
@@ -245,9 +250,6 @@ cmd_setup() {
         fi
     fi
 
-    # Use ~/.openmono/.tmp_install_env as the communication channel between install script and openmono
-    export OPENMONO_ENV_FILE="$HOME/.openmono/.tmp_install_env"
-    mkdir -p "$(dirname "$OPENMONO_ENV_FILE")"
     bash "$_INSTALL_SCRIPT" || {
         err "Installation failed. Full log: $OPENMONO_LOG_FILE"
         exit 1
