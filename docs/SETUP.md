@@ -19,21 +19,21 @@ bash <(curl -fsSL https://raw.githubusercontent.com/StartupHakk/OpenMonoAgent.ai
 
 The installer will ask you one question before it does anything:
 
-```
-  1) Both — agent + inference server on one box (single-box mode)
-  2) Inference server only — GPU box that runs the model
-             (pair with a separate agent box via openmono tunnel)
-  3) Agent only — laptop/workstation that talks to a remote inference server
-             (dual-box mode; point at inference box with openmono config)
+> [!IMPORTANT]
+> ### What do you want to install on this machine?
+>
+> 1. **Both** — agent + inference server on one box (single-box mode)
+> 2. **Inference server only** — inference box that runs the model (dual-box mode)
+> 3. **Agent only** — laptop/workstation that talks to a remote inference server
+>
+> *Picking **2** or **3**? See the [Dual-box setup](#dual-box-setup) section below for the final connection steps.*
 
-  Enter 1, 2 or 3 [default: 1]:
-```
 
 | Option | Pick this if… |
 |--------|--------------|
 | **1 — Both** | You have one machine and want everything on it |
-| **2 — Inference** | This is a dedicated GPU server — runs the model only |
-| **3 — Agent** | This is your laptop and a GPU server is already running option 2 |
+| **2 — Inference** | Dedicated inference box — do this first, then run option 3 on your agent box |
+| **3 — Agent** | Your agent box — run this after option 2 is set up on the inference box |
 
 > [!TIP]
 > Not sure? Pick **1**. If you have a GPU, this is the best starting point. If you're on CPU, make sure you have at least 24 GB RAM — the machine needs to run both the model and the agent. If you'd rather keep model load on a separate machine, go for **2** and **3**.
@@ -109,12 +109,31 @@ openmono setup --cpu     # force CPU
 
 When setup finishes you'll see:
 
-```
+```text
+────────────────────────────────────────────────────────────
+  Setup Complete
+────────────────────────────────────────────────────────────
+
   ✓ OpenMono.ai is ready to use!
+
+  Your machine is configured for single-box mode (agent + inference).
 
   Next steps:
     1. cd your-project/
-    2. openmono agent
+    2. openmono agent                 # Start the agent
+
+  Other commands:
+    openmono status              # Show llama-server status
+    openmono config             # Configure settings
+
+  Troubleshooting:
+    If openmono or docker are not found, reload your shell:
+      newgrp docker     # Activate docker group (Linux only)
+      source ~/.bashrc  # Reload shell config (bash)
+      exec $SHELL       # Reload shell
+
+  Full help: openmono --help
+────────────────────────────────────────────────────────────
 ```
 
 Reload your shell so the `openmono` command is on your PATH:
@@ -159,7 +178,7 @@ Refactor this function to be async
 Add error handling to the payment flow
 ```
 
-The agent reads your files, makes changes, and shows you exactly what it did. It will always ask before doing anything destructive.
+OpenMono navigates your codebase, proposes solutions, and executes changes with full transparency. You stay in control throughout — the agent shows its work at every step and asks before making any major actions, including file reads, edits, and running commands.
 
 > [!TIP]
 > Type `/think` or press `Ctrl+T` to enable step-by-step reasoning mode — best for complex bugs, large refactors, and architecture decisions. Turn it off for simple lookups and quick edits.
@@ -172,7 +191,7 @@ The agent reads your files, makes changes, and shows you exactly what it did. It
 openmono start      # start the inference server
 openmono stop       # stop everything
 openmono restart    # restart the inference server
-openmono status     # container · GPU · model status
+openmono status     # container · model status
 openmono logs       # tail live inference logs
 openmono help       # list all commands
 ```
@@ -181,35 +200,97 @@ openmono help       # list all commands
 
 ## Dual-box setup
 
-Run the model on a dedicated GPU server and connect from your laptop over the internet. No port forwarding required — the tunnel is established outbound from the inference box.
+Run the model on a dedicated inference box and connect from your laptop over the internet. No port forwarding required — the tunnel is established outbound from the inference box.
 
 ![Dual-box setup diagram](assets/dual-box-server.png)
 
-**On the GPU machine — register with the relay:**
+### Step 1 — Install on the inference box (option 2)
+
+On the inference box, run the installer and pick **2 — Inference server only**:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/StartupHakk/OpenMonoAgent.ai/refs/heads/main/get-openmono.sh)
+```
+
+Select **2** when prompted. The installer downloads the model and starts llama-server. No agent is installed on this machine.
+
+Confirm it's running:
+
+```bash
+openmono status
+```
+
+### Step 2 — Register the inference box with the relay
+
+Still on the inference box, run tunnel setup:
 
 ```bash
 openmono tunnel setup
 ```
 
-You'll receive a one-time verification code. Enter it at [app.openmonoagent.ai](https://app.openmonoagent.ai) — you'll get an email back with your endpoint and API key.
+You'll receive a one-time verification code. Enter it at [app.openmonoagent.ai](https://app.openmonoagent.ai) — you'll get an email with a step-by-step guide including your relay endpoint and API key.
 
 > [!NOTE]
 > The code expires in 15 minutes.
 
-**On your laptop — connect the agent:**
+Then start the tunnel:
+
+```bash
+openmono tunnel start
+```
+
+Confirm the tunnel is up:
+
+```bash
+openmono tunnel status
+```
+
+### Step 3 — Install on the laptop (option 3)
+
+Once the inference box is running and the tunnel is up, switch to your laptop and run the installer there:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/StartupHakk/OpenMonoAgent.ai/refs/heads/main/get-openmono.sh)
+```
+
+Select **3** when prompted. This installs the agent but skips Docker, model download, and llama-server — the laptop needs no GPU.
+
+### Step 4 — Point the agent at the relay
+
+Using the endpoint and API key from the email in Step 2:
 
 ```bash
 openmono config set llm.endpoint http://relay.openmonoagent.ai:<port>
 openmono config set llm.api_key <token>
+```
 
+### Step 5 — Run the agent
+
+```bash
 cd your-project/
 openmono agent
 ```
 
+The agent on your laptop sends requests through the relay to the inference box.
+
 > [!NOTE]
 > Don't have a relay account? Sign up free at [app.openmonoagent.ai](https://app.openmonoagent.ai).
 
-**Troubleshooting**
+---
+
+### Tunnel commands (inference box)
+
+```bash
+openmono tunnel start    # start the frpc tunnel
+openmono tunnel stop     # stop the tunnel
+openmono tunnel restart  # restart
+openmono tunnel status   # show tunnel state + configured target
+openmono tunnel logs     # tail frpc logs
+```
+
+---
+
+### Troubleshooting
 
 > [!CAUTION]
 > **401 Unauthorized** — the API key on your laptop doesn't match the one on the inference box.

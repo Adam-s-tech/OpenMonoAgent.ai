@@ -1,5 +1,70 @@
 # Configuration
 
+## CLI commands
+
+Commands are grouped by which box they run on.
+
+### Any box
+
+| Command | Description |
+|---------|-------------|
+| `openmono setup [--full\|--inference\|--agent] [--gpu\|--cpu]` | Install and configure a box role |
+| `openmono config <set\|get\|unset> <key> [value]` | Read/write `~/.openmono/settings.json` |
+| `openmono help` | Show help |
+
+### Agent box
+
+| Command | Description |
+|---------|-------------|
+| `openmono agent` | Run the coding agent in the current directory |
+| `openmono graph [path]` | Build the code-review-graph index for a project |
+| `openmono graphify [path]` | Build the Graphify knowledge graph for a project |
+
+### Inference box — llama-server lifecycle
+
+| Command | Description |
+|---------|-------------|
+| `openmono start` | Start llama-server in the background |
+| `openmono stop` | Stop llama-server (`docker compose down`) |
+| `openmono restart` | Restart llama-server |
+| `openmono logs` | Tail llama-server logs |
+| `openmono status` | Show container, GPU, and model status |
+
+### Inference box — frpc tunnel (dual-box only)
+
+| Command | Description |
+|---------|-------------|
+| `openmono tunnel setup` | Install frpc + systemd unit (prompts for relay signup values) |
+| `openmono tunnel start` | Start the frpc tunnel |
+| `openmono tunnel stop` | Stop the frpc tunnel |
+| `openmono tunnel restart` | Restart the frpc tunnel |
+| `openmono tunnel status` | Show tunnel state and configured target |
+| `openmono tunnel logs` | Tail frpc logs (`journalctl -u frpc`) |
+
+### Global flags
+
+| Flag | Description |
+|------|-------------|
+| `--verbose`, `-v` | Enable verbose/debug output (forwarded to the agent) |
+
+### Examples
+
+```bash
+openmono setup                    # First-time single-box setup (auto-detects GPU)
+openmono setup --cpu              # Force CPU mode
+openmono start                    # Start llama-server
+openmono agent                    # Run agent in current directory
+openmono --verbose                # Run agent with LLM debug output
+WORKSPACE=/my/repo openmono agent # Run agent against a specific repo
+openmono graph /path/to/project   # Index a project for code search
+```
+
+For the dual-box walkthrough, see `setup/readme.md`.
+
+---
+
+## Settings
+
 Settings are loaded in this order, each layer overriding the previous:
 
 1. Built-in defaults

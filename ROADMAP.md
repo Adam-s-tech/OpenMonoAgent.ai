@@ -8,6 +8,7 @@
 
 ## In Progress
 
+- [ ] `openmono stop` not working, it is not stopping llama-server correctly
 - [ ] Colored diff display for file edits
 - [ ] Git branch + status injected into system prompt
 - [ ] Built-in playbooks — commit, review, explain, debug
