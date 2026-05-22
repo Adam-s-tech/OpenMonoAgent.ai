@@ -41,6 +41,9 @@ services:
       dockerfile: docker/Dockerfile.agent
     container_name: openmono-agent
     profiles: ["full", "agent"]
+    # Clear the image's default CMD (--acp-only) so the entrypoint runs the
+    # interactive TUI. Compose v2 treats `command: []` as "no default CMD".
+    command: []
     volumes:
       - ${WORKSPACE:-.}:/workspace
       - ${HOME}/.openmono:/home/agent/.openmono

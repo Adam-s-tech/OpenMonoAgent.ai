@@ -30,8 +30,8 @@ if ! docker info >/dev/null 2>&1; then
   exit 2
 fi
 if [[ -z "${OPENMONO_SKIP_BUILD:-}" ]]; then
-  echo ">> docker build -t $IMAGE public/"
-  docker build -t "$IMAGE" public/
+  echo ">> docker build -f public/docker/Dockerfile.agent -t $IMAGE public/"
+  docker build -f public/docker/Dockerfile.agent -t "$IMAGE" public/
 fi
 
 PORT="${ACP_PORT:-$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')}"
