@@ -111,8 +111,10 @@ internal sealed partial class AnsiPainter(AppConfig config, SessionState session
     private bool _autoScroll = true;
 
     private Func<string> _getBgInput = () => "";
+    private Func<bool> _isTurnActive = () => false;
 
     internal void SetBgInputProvider(Func<string> getter) => _getBgInput = getter;
+    internal void SetTurnActiveProvider(Func<bool> getter) => _isTurnActive = getter;
 
     internal bool Verbose { get; set; }
 
@@ -1332,7 +1334,9 @@ internal sealed partial class AnsiPainter(AppConfig config, SessionState session
         var scrollIndicator = _scrollOffset > 0
             ? $"{Fy}↑ PgUp/PgDn to scroll{R}{BgStatus}  "
             : "";
-        var mid   = $"{scrollIndicator}{Fk}esc{R}{BgStatus} {Fw}cancel{R}{BgStatus}";
+        var canCancel = _isTurnActive() || QueuedCount > 0;
+        var cancelHint = canCancel ? $"{Fk}esc{R}{BgStatus} {Fw}cancel{R}{BgStatus}" : "";
+        var mid   = $"{scrollIndicator}{cancelHint}";
         var right = $"{Fk}ctrl+c{R}{BgStatus} {Fw}quit{R}{BgStatus}   {Fk}ctrl+p{R}{BgStatus} {Fw}commands{R}{BgStatus} ";
         var visM  = VisLen(mid);
         var visR  = VisLen(right);

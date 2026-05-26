@@ -22,6 +22,7 @@ public sealed class AnsiTuiRenderer : IRenderer
         _inputReader = new AnsiInputReader(_painter, _overlay, terminal);
 
         _painter.SetBgInputProvider(() => _inputReader.BgInputText);
+        _painter.SetTurnActiveProvider(() => _inputReader.CurrentTurnCts is { } cts && !cts.IsCancellationRequested);
         _inputReader.OnSafeExit = SafeExit;
 
         terminal.InterruptRequested += _ => SafeExit();
